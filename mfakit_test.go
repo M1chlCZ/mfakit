@@ -56,16 +56,16 @@ func TestEnvelopeBindsVersionKeyIDAndUser(t *testing.T) {
 	key := bytesSequence(mfakit.KeyBytes, 1)
 	userID := uuid.MustParse("01912345-6789-7abc-8def-0123456789ab")
 	secret := bytesSequence(mfakit.SecretBytes, 33)
-	envelope, err := mfakit.EncryptSecret(7, key, userID, secret)
-	if err != nil {
-		t.Fatalf("EncryptSecret: %v", err)
+	envelope, encryptErr := mfakit.EncryptSecret(7, key, userID, secret)
+	if encryptErr != nil {
+		t.Fatalf("EncryptSecret: %v", encryptErr)
 	}
 	if len(envelope) != 2+12+len(secret)+16 || envelope[0] != 1 || envelope[1] != 7 {
 		t.Fatalf("envelope shape = len %d prefix %v", len(envelope), envelope[:2])
 	}
-	decrypted, err := mfakit.DecryptSecret(map[byte][]byte{7: key}, userID, envelope)
-	if err != nil || string(decrypted) != string(secret) {
-		t.Fatalf("DecryptSecret = %x, %v", decrypted, err)
+	decrypted, decryptErr := mfakit.DecryptSecret(map[byte][]byte{7: key}, userID, envelope)
+	if decryptErr != nil || string(decrypted) != string(secret) {
+		t.Fatalf("DecryptSecret = %x, %v", decrypted, decryptErr)
 	}
 	if _, err := mfakit.DecryptSecret(map[byte][]byte{7: key}, uuid.New(), envelope); err == nil {
 		t.Fatal("DecryptSecret accepted a different user")
@@ -88,9 +88,9 @@ func TestEnvelopeBindsVersionKeyIDAndUser(t *testing.T) {
 func TestRecoveryCodesAreCanonicalAndHashable(t *testing.T) {
 	t.Parallel()
 	random := strings.NewReader(string(bytesSequence(mfakit.RecoveryCodeCount*mfakit.RecoveryCodeBytes, 9)))
-	codes, hashes, err := mfakit.NewRecoveryCodes(random)
-	if err != nil {
-		t.Fatalf("NewRecoveryCodes: %v", err)
+	codes, hashes, recoveryErr := mfakit.NewRecoveryCodes(random)
+	if recoveryErr != nil {
+		t.Fatalf("NewRecoveryCodes: %v", recoveryErr)
 	}
 	if len(codes) != 10 || len(hashes) != 10 {
 		t.Fatalf("recovery counts = %d/%d", len(codes), len(hashes))
@@ -119,9 +119,9 @@ func TestRecoveryCodesAreCanonicalAndHashable(t *testing.T) {
 
 func TestSecretKeyIDAndInvalidInput(t *testing.T) {
 	t.Parallel()
-	secret, err := mfakit.NewSecret(strings.NewReader(string(bytesSequence(mfakit.SecretBytes, 1))))
-	if err != nil || len(secret) != mfakit.SecretBytes {
-		t.Fatalf("NewSecret = %x, %v", secret, err)
+	secret, newSecretErr := mfakit.NewSecret(strings.NewReader(string(bytesSequence(mfakit.SecretBytes, 1))))
+	if newSecretErr != nil || len(secret) != mfakit.SecretBytes {
+		t.Fatalf("NewSecret = %x, %v", secret, newSecretErr)
 	}
 	if _, err := mfakit.NewSecret(nil); err == nil {
 		t.Fatal("NewSecret accepted a nil source")

@@ -4,7 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // RFC 6238 TOTP mandates HMAC-SHA-1 for compatibility.
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base32"
@@ -36,8 +36,6 @@ const (
 )
 
 const aadDomain = "mfakit/totp/v1"
-
-var recoveryEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // NewSecret returns a random TOTP secret.
 func NewSecret(random io.Reader) ([]byte, error) {
@@ -101,7 +99,8 @@ func EncryptSecret(keyID byte, key []byte, userID uuid.UUID, secret []byte) ([]b
 		return nil, err
 	}
 	prefix := []byte{envelopeVersion, keyID}
-	return aead.Seal(prefix, nil, secret, aad(prefix, userID)), nil
+	sealed := aead.Seal(prefix, nil, secret, aad(prefix, userID)) //nolint:gosec // NewGCMWithRandomNonce requires nil
+	return sealed, nil
 }
 
 // DecryptSecret opens an envelope with one of the keys. The key ID in the
@@ -151,6 +150,7 @@ func NewRecoveryCodes(random io.Reader) ([]string, [][sha256.Size]byte, error) {
 	if random == nil {
 		return nil, nil, errors.New("recovery random source is required")
 	}
+	encoding := base32.StdEncoding.WithPadding(base32.NoPadding)
 	codes := make([]string, 0, RecoveryCodeCount)
 	hashes := make([][sha256.Size]byte, 0, RecoveryCodeCount)
 	seen := make(map[string]struct{}, RecoveryCodeCount)
@@ -159,7 +159,7 @@ func NewRecoveryCodes(random io.Reader) ([]string, [][sha256.Size]byte, error) {
 		if _, err := io.ReadFull(random, raw[:]); err != nil {
 			return nil, nil, errors.New("generate recovery codes")
 		}
-		canonical := recoveryEncoding.EncodeToString(raw[:])
+		canonical := encoding.EncodeToString(raw[:])
 		if _, exists := seen[canonical]; exists {
 			continue
 		}
@@ -173,6 +173,7 @@ func NewRecoveryCodes(random io.Reader) ([]string, [][sha256.Size]byte, error) {
 // CanonicalRecoveryCode normalizes user input. It accepts lower case, upper
 // case, and grouped input with dashes.
 func CanonicalRecoveryCode(value string) (string, error) {
+	encoding := base32.StdEncoding.WithPadding(base32.NoPadding)
 	upper := strings.ToUpper(value)
 	canonical := upper
 	if strings.Contains(upper, "-") {
@@ -181,8 +182,8 @@ func CanonicalRecoveryCode(value string) (string, error) {
 		}
 		canonical = strings.ReplaceAll(upper, "-", "")
 	}
-	decoded, err := recoveryEncoding.DecodeString(canonical)
-	if err != nil || len(decoded) != RecoveryCodeBytes || recoveryEncoding.EncodeToString(decoded) != canonical {
+	decoded, err := encoding.DecodeString(canonical)
+	if err != nil || len(decoded) != RecoveryCodeBytes || encoding.EncodeToString(decoded) != canonical {
 		return "", errors.New("invalid recovery code")
 	}
 	return canonical, nil
