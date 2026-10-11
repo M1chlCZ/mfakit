@@ -99,7 +99,7 @@ func EncryptSecret(keyID byte, key []byte, userID uuid.UUID, secret []byte) ([]b
 		return nil, err
 	}
 	prefix := []byte{envelopeVersion, keyID}
-	sealed := aead.Seal(prefix, nil, secret, aad(prefix, userID)) //nolint:gosec // NewGCMWithRandomNonce requires nil
+	sealed := aead.Seal(prefix, nil, secret, aad(prefix, userID)) //nolint:gosec // NewGCMWithRandomNonce requires a nil nonce.
 	return sealed, nil
 }
 
