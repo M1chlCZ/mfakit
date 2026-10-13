@@ -3,6 +3,7 @@ package mfakit_test
 import (
 	"crypto/sha256"
 	"encoding/base32"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +155,87 @@ func TestSecretKeyIDAndInvalidInput(t *testing.T) {
 	}
 	if _, err := mfakit.DecryptSecret(map[byte][]byte{1: key}, userID, []byte{2, 1}); err == nil {
 		t.Fatal("DecryptSecret accepted an invalid envelope")
+	}
+}
+
+func TestOTPAuthURIMatchesProvisioningFormat(t *testing.T) {
+	t.Parallel()
+	secret := []byte("12345678901234567890")
+	uri, uriErr := mfakit.OTPAuthURI("Example", "alice@example.com", secret)
+	if uriErr != nil {
+		t.Fatalf("OTPAuthURI: %v", uriErr)
+	}
+	want := "otpauth://totp/Example:alice%40example.com" +
+		"?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" +
+		"&issuer=Example&algorithm=SHA1&digits=6&period=30"
+	if uri != want {
+		t.Fatalf("OTPAuthURI = %q, want %q", uri, want)
+	}
+	trimmed, trimErr := mfakit.OTPAuthURI("  Example\t", " alice@example.com\n", secret)
+	if trimErr != nil || trimmed != want {
+		t.Fatalf("OTPAuthURI trimmed = %q, %v", trimmed, trimErr)
+	}
+}
+
+func TestOTPAuthURIEscapesLabelAndIssuer(t *testing.T) {
+	t.Parallel()
+	secret := []byte("12345678901234567890")
+	uri, uriErr := mfakit.OTPAuthURI("ACME: Co", "alice:work", secret)
+	if uriErr != nil {
+		t.Fatalf("OTPAuthURI: %v", uriErr)
+	}
+	label := strings.SplitN(strings.TrimPrefix(uri, "otpauth://totp/"), "?", 2)[0]
+	if label != "ACME%3A%20Co:alice%3Awork" {
+		t.Fatalf("escaped label = %q", label)
+	}
+	parsed, parseErr := url.Parse(uri)
+	if parseErr != nil {
+		t.Fatalf("url.Parse: %v", parseErr)
+	}
+	if parsed.Scheme != "otpauth" || parsed.Host != "totp" {
+		t.Fatalf("uri target = %q://%q", parsed.Scheme, parsed.Host)
+	}
+	decodedLabel, unescapeErr := url.PathUnescape(label)
+	if unescapeErr != nil || decodedLabel != "ACME: Co:alice:work" {
+		t.Fatalf("decoded label = %q, %v", decodedLabel, unescapeErr)
+	}
+	if issuer := parsed.Query().Get("issuer"); issuer != "ACME: Co" {
+		t.Fatalf("issuer parameter = %q", issuer)
+	}
+	unicodeURI, unicodeErr := mfakit.OTPAuthURI("Žluťoučký kůň", "účet", secret)
+	if unicodeErr != nil {
+		t.Fatalf("OTPAuthURI unicode: %v", unicodeErr)
+	}
+	unicodeLabel := strings.SplitN(strings.TrimPrefix(unicodeURI, "otpauth://totp/"), "?", 2)[0]
+	if unicodeLabel != "%C5%BDlu%C5%A5ou%C4%8Dk%C3%BD%20k%C5%AF%C5%88:%C3%BA%C4%8Det" {
+		t.Fatalf("escaped unicode label = %q", unicodeLabel)
+	}
+}
+
+func TestOTPAuthURIRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+	secret := []byte("12345678901234567890")
+	for _, testCase := range []struct {
+		issuer  string
+		account string
+	}{
+		{"", "alice@example.com"},
+		{"   ", "alice@example.com"},
+		{"Example", ""},
+		{"Example", " \t\n "},
+		{"ACME\nCo", "alice@example.com"},
+		{"ACME\x00Co", "alice@example.com"},
+		{"Example", "alice\x7fwork"},
+		{"Example", "alice\u0085work"},
+	} {
+		if uri, err := mfakit.OTPAuthURI(testCase.issuer, testCase.account, secret); err == nil {
+			t.Fatalf("OTPAuthURI accepted issuer %q account %q: %q", testCase.issuer, testCase.account, uri)
+		}
+	}
+	for _, invalid := range [][]byte{nil, {}, []byte("short"), bytesSequence(mfakit.SecretBytes-1, 1), bytesSequence(mfakit.SecretBytes+1, 1)} {
+		if uri, err := mfakit.OTPAuthURI("Example", "alice@example.com", invalid); err == nil {
+			t.Fatalf("OTPAuthURI accepted a %d-byte secret: %q", len(invalid), uri)
+		}
 	}
 }
 

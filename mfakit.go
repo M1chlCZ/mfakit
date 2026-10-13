@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -33,6 +34,7 @@ const (
 	dynamicOffsetMask = byte(0x0f)
 	dynamicValueMask  = uint32(0x7fffffff)
 	codeModulus       = 1_000_000
+	otpAuthAlgorithm  = "SHA1"
 )
 
 const aadDomain = "mfakit/totp/v1"
@@ -86,6 +88,79 @@ func MatchTOTPStep(secret []byte, code string, now time.Time, lastUsed *int64) (
 		}
 	}
 	return 0, false
+}
+
+// OTPAuthURI returns an otpauth TOTP provisioning URI for authenticator apps.
+// The label carries the trimmed issuer and account separated by a colon, and
+// the issuer parameter repeats the issuer. The secret parameter is the base32
+// encoding without padding. The algorithm, digits, and period parameters come
+// from the package parameters (SHA-1, CodeDigits digits, PeriodSeconds
+// seconds). The secret must be SecretBytes long. The issuer and account must
+// not be empty and must not contain control characters. Render the QR code in
+// the caller: this package keeps no QR dependency.
+func OTPAuthURI(issuer, account string, secret []byte) (string, error) {
+	issuer = strings.TrimSpace(issuer)
+	account = strings.TrimSpace(account)
+	if issuer == "" {
+		return "", errors.New("issuer is required")
+	}
+	if account == "" {
+		return "", errors.New("account is required")
+	}
+	if hasControlCharacter(issuer) {
+		return "", errors.New("issuer contains control characters")
+	}
+	if hasControlCharacter(account) {
+		return "", errors.New("account contains control characters")
+	}
+	if len(secret) != SecretBytes {
+		return "", fmt.Errorf("secret must be %d bytes", SecretBytes)
+	}
+	escapedIssuer := escapeURIPart(issuer)
+	escapedAccount := escapeURIPart(account)
+	encodedSecret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)
+	return "otpauth://totp/" + escapedIssuer + ":" + escapedAccount +
+		"?secret=" + encodedSecret +
+		"&issuer=" + escapedIssuer +
+		"&algorithm=" + otpAuthAlgorithm +
+		"&digits=" + strconv.Itoa(CodeDigits) +
+		"&period=" + strconv.Itoa(PeriodSeconds), nil
+}
+
+func hasControlCharacter(value string) bool {
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return true
+		}
+	}
+	return false
+}
+
+func escapeURIPart(value string) string {
+	const hexDigits = "0123456789ABCDEF"
+	var escaped strings.Builder
+	escaped.Grow(len(value))
+	for index := 0; index < len(value); index++ {
+		char := value[index]
+		if isURIUnreserved(char) {
+			escaped.WriteByte(char)
+			continue
+		}
+		escaped.WriteByte('%')
+		escaped.WriteByte(hexDigits[char>>4])
+		escaped.WriteByte(hexDigits[char&0x0f])
+	}
+	return escaped.String()
+}
+
+func isURIUnreserved(char byte) bool {
+	switch {
+	case 'a' <= char && char <= 'z', 'A' <= char && char <= 'Z', '0' <= char && char <= '9':
+		return true
+	case char == '-', char == '.', char == '_', char == '~':
+		return true
+	}
+	return false
 }
 
 // EncryptSecret wraps a TOTP secret in an AES-256-GCM envelope. The envelope
